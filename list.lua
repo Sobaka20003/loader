@@ -4,6 +4,9 @@ local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
+-- Флаг для включения/выключения
+local Enabled = true
+
 -- Создание интерфейса
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui")
@@ -56,6 +59,8 @@ UIListLayout.SortOrder = Enum.SortOrder.Name
 UIListLayout.Parent = PlayerList
 
 local playerFrames = {}
+local playerFrameInstances = {} -- Для предотвращения дублирования
+
 local function formatDistance(distance)
     if distance >= 1000 then
         return string.format("%.1fk", distance / 1000)
@@ -77,7 +82,39 @@ local function calculateDirection(localRoot, targetRoot)
     return math.deg(angle)
 end
 
+local function getDirectionArrow(direction)
+    -- Нормализуем угол от 0 до 360
+    local normalized = (direction + 360) % 360
+    
+    if normalized >= 337.5 or normalized < 22.5 then
+        return "⬆"  -- Север
+    elseif normalized >= 22.5 and normalized < 67.5 then
+        return "↗"  -- Северо-восток
+    elseif normalized >= 67.5 and normalized < 112.5 then
+        return "➡"  -- Восток
+    elseif normalized >= 112.5 and normalized < 157.5 then
+        return "↘"  -- Юго-восток
+    elseif normalized >= 157.5 and normalized < 202.5 then
+        return "⬇"  -- Юг
+    elseif normalized >= 202.5 and normalized < 247.5 then
+        return "↙"  -- Юго-запад
+    elseif normalized >= 247.5 and normalized < 292.5 then
+        return "⬅"  -- Запад
+    elseif normalized >= 292.5 and normalized < 337.5 then
+        return "↖"  -- Северо-запад
+    end
+    
+    return "⬆"
+end
+
 local function createPlayerFrame(player)
+    -- Проверяем, не создан ли уже фрейм
+    if playerFrames[player] then
+        if playerFrames[player].Frame and playerFrames[player].Frame.Parent then
+            return playerFrames[player]
+        end
+    end
+    
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(1, 0, 0, 32)
     frame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
@@ -150,8 +187,10 @@ local function createPlayerFrame(player)
         ArrowLabel = arrowLabel
     }
     
+    playerFrameInstances[frame] = true
+    
     frame.Parent = PlayerList
-    return frame
+    return playerFrames[player]
 end
 
 local function updateTeamColor(player, data)
@@ -189,29 +228,7 @@ local function updatePlayerFrame(player, data)
     data.DistanceLabel.Text = formatDistance(distance) .. " studs"
     
     local direction = calculateDirection(localRoot, humanoidRootPart)
-    
-    local arrowMap = {
-        {0, 45, "⬆"},      -- Север
-        {45, 135, "➡"},    -- Восток
-        {135, 225, "⬇"},   -- Юг
-        {225, 315, "⬅"},   -- Запад
-        {315, 360, "⬆"}    -- Север
-    }
-    
-    local absDir = math.abs(direction)
-    if absDir > 180 then
-        absDir = 360 - absDir
-    end
-    
-    local arrowText = "⬆"
-    for _, range in ipairs(arrowMap) do
-        if direction >= range[1] and direction < range[2] then
-            arrowText = range[3]
-            break
-        end
-    end
-    
-    data.ArrowLabel.Text = arrowText
+    data.ArrowLabel.Text = getDirectionArrow(direction)
     
     local distanceColor
     if distance < 50 then
@@ -229,10 +246,16 @@ local function updatePlayerFrame(player, data)
 end
 
 local function updateList()
-    local count = 0
+    if not Enabled then return end
     
+    local count = 0
+    local currentPlayers = {}
+    
+    -- Обновляем существующих игроков
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
+            currentPlayers[player] = true
+            
             if not playerFrames[player] then
                 createPlayerFrame(player)
             end
@@ -248,21 +271,27 @@ local function updateList()
     
     Title.Text = string.format("ИГРОКИ [%d]", count)
     
+    -- Удаляем фреймы игроков, которых нет в игре
     for player, data in pairs(playerFrames) do
-        if not Players:FindFirstChild(player.Name) then
-            data.Frame:Destroy()
+        if not currentPlayers[player] then
+            if data.Frame then
+                data.Frame:Destroy()
+                playerFrameInstances[data.Frame] = nil
+            end
             playerFrames[player] = nil
         end
     end
 end
 
 local function initialize()
+    -- Создаем фреймы для текущих игроков
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= LocalPlayer then
             createPlayerFrame(player)
         end
     end
     
+    -- Игрок присоединился
     Players.PlayerAdded:Connect(function(player)
         if player ~= LocalPlayer then
             task.wait(0.5)
@@ -270,22 +299,40 @@ local function initialize()
         end
     end)
     
+    -- Игрок вышел
     Players.PlayerRemoving:Connect(function(player)
         if playerFrames[player] then
-            playerFrames[player].Frame:Destroy()
+            if playerFrames[player].Frame then
+                playerFrames[player].Frame:Destroy()
+                playerFrameInstances[playerFrames[player].Frame] = nil
+            end
             playerFrames[player] = nil
         end
     end)
     
-    local debounce = false
-    RunService.RenderStepped:Connect(function()
-        if debounce then return end
-        debounce = true
-        
+    -- Основной цикл обновления
+    RunService.Heartbeat:Connect(function()
         updateList()
-        
-        debounce = false
     end)
 end
 
+-- Функции для управления из main.lua
+local module = {}
+
+function module.Toggle()
+    Enabled = not Enabled
+    MainFrame.Visible = Enabled
+    return Enabled
+end
+
+function module.SetEnabled(state)
+    Enabled = state
+    MainFrame.Visible = state
+    return state
+end
+
+-- Инициализируем
 initialize()
+
+-- Возвращаем модуль для управления из main.lua
+return module
