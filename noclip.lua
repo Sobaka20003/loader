@@ -1,158 +1,61 @@
--- noclip.lua - NoClip с обходом серверного детекта
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local LocalPlayer = Players.LocalPlayer
-
-local Enabled = false
-local NoclipConnection = nil
-local OriginalVelocities = {}
-
--- Метод обхода детекта: смещение позиции на микро-расстояние
-local function safeNoClip()
-    if not Enabled then return end
+-- Функция для включения/выключения (исправленная)
+local function toggleFunction(funcName)
+    local funcData = Functions[funcName]
+    local funcFrame = FunctionFrames[funcName]
     
-    local character = LocalPlayer.Character
-    if not character then return end
-    
-    local humanoid = character:FindFirstChild("Humanoid")
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    
-    if not humanoid or not rootPart then return end
-    
-    -- Сохраняем оригинальные значения для восстановления
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then
-            if not OriginalVelocities[part] then
-                OriginalVelocities[part] = {
-                    CanCollide = part.CanCollide,
-                    Velocity = part.VectorVelocity,
-                    AssemblyLinearVelocity = part.AssemblyLinearVelocity
-                }
+    if not funcData.Enabled then
+        -- Включаем
+        Status.Text = "Загрузка "..funcName.."..."
+        
+        local success, err = pcall(function()
+            if loadScript(funcName, funcData.ScriptURL) then
+                if funcData.Module then
+                    -- Для NoClip используем специальную обработку
+                    if funcName == "NoClip" then
+                        funcData.Enabled = funcData.Module.Enable()
+                    elseif funcData.Module.Toggle then
+                        funcData.Module.Toggle(true)
+                    elseif funcData.Module.SetEnabled then
+                        funcData.Module.SetEnabled(true)
+                    elseif funcData.Module.Enable then
+                        funcData.Module.Enable()
+                    end
+                end
+                funcData.Enabled = true
+                funcFrame.ToggleBtn.Text = funcData.Name .. " [ON]"
+                funcFrame.ToggleBtn.TextColor3 = Color3.fromRGB(100, 255, 100)
+                Status.Text = funcName.." включен!"
             end
-            
-            -- Мягкое отключение коллизий (не сразу)
-            part.CanCollide = false
-            
-            -- Добавляем микро-толчки для обхода простых детектов
-            if RunService:IsClient() then
-                -- На клиенте: незаметное смещение
-                local microMove = Vector3.new(
-                    math.random(-0.01, 0.01),
-                    math.random(-0.01, 0.01),
-                    math.random(-0.01, 0.01)
-                )
-                part.Velocity = part.Velocity + microMove
+        end)
+        
+        if not success then
+            Status.Text = "Ошибка: "..tostring(err)
+            funcData.Enabled = false
+        end
+        
+    else
+        -- Выключаем
+        local success, err = pcall(function()
+            if funcData.Module then
+                -- Для NoClip
+                if funcName == "NoClip" then
+                    funcData.Module.Disable()
+                elseif funcData.Module.Toggle then
+                    funcData.Module.Toggle(false)
+                elseif funcData.Module.SetEnabled then
+                    funcData.Module.SetEnabled(false)
+                elseif funcData.Module.Disable then
+                    funcData.Module.Disable()
+                end
             end
+            funcData.Enabled = false
+            funcFrame.ToggleBtn.Text = funcData.Name .. " [OFF]"
+            funcFrame.ToggleBtn.TextColor3 = Color3.fromRGB(255, 100, 100)
+            Status.Text = funcData.Name .. " выключен"
+        end)
+        
+        if not success then
+            Status.Text = "Ошибка отключения: "..tostring(err)
         end
     end
-    
-    -- Метод 2: Временное изменение состояния Humanoid
-    if humanoid then
-        humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-        task.wait(0.05)
-        humanoid:ChangeState(Enum.HumanoidStateType.RunningNoPhysics)
-    end
-    
-    -- Метод 3: Периодическое "подпрыгивание" для сброса детекта
-    if math.random(1, 100) < 10 then -- 10% chance
-        rootPart.Velocity = rootPart.Velocity + Vector3.new(0, 0.1, 0)
-    end
 end
-
--- Основная функция NoClip
-local function noclipLoop()
-    while Enabled do
-        safeNoClip()
-        RunService.Heartbeat:Wait()
-    end
-end
-
-local function enable()
-    if Enabled then return end
-    Enabled = true
-    
-    -- Подключаем соединение
-    NoclipConnection = RunService.Heartbeat:Connect(safeNoClip)
-    
-    -- Также запускаем в отдельном потоке для надежности
-    coroutine.wrap(noclipLoop)()
-    
-    print("NoClip включен (защита от детекта активна)")
-end
-
-local function disable()
-    if not Enabled then return end
-    Enabled = false
-    
-    -- Отключаем соединение
-    if NoclipConnection then
-        NoclipConnection:Disconnect()
-        NoclipConnection = nil
-    end
-    
-    -- Восстанавливаем оригинальные значения
-    local character = LocalPlayer.Character
-    if character then
-        for _, part in ipairs(character:GetDescendants()) do
-            if part:IsA("BasePart") and OriginalVelocities[part] then
-                part.CanCollide = OriginalVelocities[part].CanCollide
-                part.Velocity = OriginalVelocities[part].Velocity
-                part.AssemblyLinearVelocity = OriginalVelocities[part].AssemblyLinearVelocity
-            end
-        end
-    end
-    
-    -- Очищаем таблицу
-    OriginalVelocities = {}
-    
-    print("NoClip выключен")
-end
-
--- Модуль для управления из main.lua
-local module = {}
-
-function module.Toggle(state)
-    if state == nil then
-        state = not Enabled
-    end
-    
-    if state then
-        enable()
-    else
-        disable()
-    end
-    
-    return Enabled
-end
-
-function module.SetEnabled(state)
-    if state then
-        enable()
-    else
-        disable()
-    end
-    
-    return state
-end
-
-function module.Enable()
-    enable()
-end
-
-function module.Disable()
-    disable()
-end
-
--- Экстренное отключение при смерти/респавне
-LocalPlayer.CharacterAdded:Connect(function()
-    if Enabled then
-        task.wait(0.5)  -- Ждем загрузку персонажа
-        enable()  -- Включаем заново
-    end
-end)
-
-LocalPlayer.CharacterRemoving:Connect(function()
-    OriginalVelocities = {}
-end)
-
-return module
